@@ -20,10 +20,10 @@ mongoose.connect(process.env.MONGO_URI)
    Student Schema
 =========================== */
 const studentSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true }
-}, { timestamps: true });
+    name: String,
+    email: { type: String, unique: true },
+    password: String
+});
 
 const Student = mongoose.model("Student", studentSchema);
 
@@ -31,14 +31,12 @@ const Student = mongoose.model("Student", studentSchema);
    Grievance Schema
 =========================== */
 const grievanceSchema = new mongoose.Schema({
-    title: { type: String, required: true },
-    description: { type: String, required: true },
+    title: String,
+    description: String,
     category: {
         type: String,
-        enum: ["Academic", "Hostel", "Transport", "Other"],
-        required: true
+        enum: ["Academic", "Hostel", "Transport", "Other"]
     },
-    date: { type: Date, default: Date.now },
     status: {
         type: String,
         enum: ["Pending", "Resolved"],
@@ -57,24 +55,13 @@ const Grievance = mongoose.model("Grievance", grievanceSchema);
 =========================== */
 const authMiddleware = (req, res, next) => {
     try {
-        const authHeader = req.headers.authorization;
-
-        if (!authHeader) {
-            return res.status(401).json({ message: "No token provided" });
-        }
-
-        const token = authHeader.split(" ")[1];
-
-        if (!token) {
-            return res.status(401).json({ message: "Invalid token format" });
-        }
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) return res.status(401).json({ message: "No token" });
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
         req.user = decoded;
         next();
-
-    } catch (error) {
+    } catch {
         res.status(401).json({ message: "Invalid token" });
     }
 };
@@ -83,57 +70,37 @@ const authMiddleware = (req, res, next) => {
    AUTH ROUTES
 =========================== */
 
-/* 🔹 Register */
 app.post("/api/register", async (req, res) => {
     try {
         const { name, email, password } = req.body;
 
-        const existing = await Student.findOne({ email });
-        if (existing) {
-            return res.status(400).json({ message: "Email already exists" });
-        }
+        const exist = await Student.findOne({ email });
+        if (exist) return res.status(400).json({ message: "Email exists" });
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(password, 10);
 
-        const student = new Student({
-            name,
-            email,
-            password: hashedPassword
-        });
+        await Student.create({ name, email, password: hash });
 
-        await student.save();
-
-        res.json({ message: "Registration successful" });
-
-    } catch (error) {
+        res.json({ message: "Registered" });
+    } catch (e) {
         res.status(500).json({ message: "Server error" });
     }
 });
 
-/* 🔹 Login */
 app.post("/api/login", async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        const student = await Student.findOne({ email });
-        if (!student) {
-            return res.status(400).json({ message: "Invalid email" });
-        }
+        const user = await Student.findOne({ email });
+        if (!user) return res.status(400).json({ message: "Invalid email" });
 
-        const isMatch = await bcrypt.compare(password, student.password);
-        if (!isMatch) {
-            return res.status(400).json({ message: "Invalid password" });
-        }
+        const ok = await bcrypt.compare(password, user.password);
+        if (!ok) return res.status(400).json({ message: "Invalid password" });
 
-        const token = jwt.sign(
-            { id: student._id },
-            process.env.JWT_SECRET,
-            { expiresIn: "1d" }
-        );
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
 
-        res.json({ token, message: "Login successful" });
-
-    } catch (error) {
+        res.json({ token });
+    } catch {
         res.status(500).json({ message: "Server error" });
     }
 });
@@ -142,106 +109,74 @@ app.post("/api/login", async (req, res) => {
    GRIEVANCE ROUTES
 =========================== */
 
-/* 🔹 Submit grievance */
-app.post("/api/grievances", authMiddleware, async (req, res) => {
-    try {
-        const { title, description, category } = req.body;
-
-        const grievance = new Grievance({
-            title,
-            description,
-            category,
-            student: req.user.id
-        });
-
-        await grievance.save();
-
-        res.json({ message: "Grievance submitted", grievance });
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
-/* 🔹 Get all grievances */
-app.get("/api/grievances", authMiddleware, async (req, res) => {
-    try {
-        const grievances = await Grievance.find()
-            .populate("student", "name email");
-
-        res.json(grievances);
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
-/* 🔹 Get grievance by ID */
-app.get("/api/grievances/:id", authMiddleware, async (req, res) => {
-    try {
-        const grievance = await Grievance.findById(req.params.id)
-            .populate("student", "name email");
-
-        if (!grievance) {
-            return res.status(404).json({ message: "Not found" });
-        }
-
-        res.json(grievance);
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
-/* 🔹 Update grievance */
-app.put("/api/grievances/:id", authMiddleware, async (req, res) => {
-    try {
-        const updated = await Grievance.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            { new: true }
-        );
-
-        res.json({ message: "Updated", updated });
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
-/* 🔹 Delete grievance */
-app.delete("/api/grievances/:id", authMiddleware, async (req, res) => {
-    try {
-        await Grievance.findByIdAndDelete(req.params.id);
-
-        res.json({ message: "Deleted successfully" });
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
-/* 🔹 Search grievance */
+/* 🔹 SEARCH (IMPORTANT: FIRST) */
 app.get("/api/grievances/search", authMiddleware, async (req, res) => {
     try {
         const { title } = req.query;
 
-        const grievances = await Grievance.find({
+        if (!title) {
+            return res.status(400).json({ message: "Title required" });
+        }
+
+        const data = await Grievance.find({
             title: { $regex: title, $options: "i" }
         });
 
-        res.json(grievances);
-
-    } catch (error) {
+        res.json(data);
+    } catch (e) {
+        console.log(e);
         res.status(500).json({ message: "Server error" });
     }
 });
 
+/* 🔹 CREATE */
+app.post("/api/grievances", authMiddleware, async (req, res) => {
+    try {
+        const g = await Grievance.create({
+            ...req.body,
+            student: req.user.id
+        });
+
+        res.json(g);
+    } catch {
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+/* 🔹 GET ALL */
+app.get("/api/grievances", authMiddleware, async (req, res) => {
+    const data = await Grievance.find().populate("student", "name");
+    res.json(data);
+});
+
+/* 🔹 GET BY ID */
+app.get("/api/grievances/:id", authMiddleware, async (req, res) => {
+    try {
+        const data = await Grievance.findById(req.params.id);
+
+        if (!data) return res.status(404).json({ message: "Not found" });
+
+        res.json(data);
+    } catch {
+        res.status(400).json({ message: "Invalid ID" });
+    }
+});
+
+/* 🔹 UPDATE */
+app.put("/api/grievances/:id", authMiddleware, async (req, res) => {
+    const updated = await Grievance.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(updated);
+});
+
+/* 🔹 DELETE */
+app.delete("/api/grievances/:id", authMiddleware, async (req, res) => {
+    await Grievance.findByIdAndDelete(req.params.id);
+    res.json({ message: "Deleted" });
+});
+
 /* ===========================
-   Server Start
+   SERVER
 =========================== */
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("Server running on", PORT));
